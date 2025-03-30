@@ -11,7 +11,6 @@ import android.net.NetworkInfo;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
 import android.provider.Settings;
-import android.util.Log;
 import android.widget.Toast;
 
 import androidx.core.app.ActivityCompat;
@@ -26,26 +25,23 @@ import java.util.Timer;
 import java.util.TimerTask;
 
 /**
- * Handles Wi-Fi scanning, constructs fingerprint JSON, and calls WiFiPositioning.
- * 额外增加了：
- *  - Outlier detection：对比上次 RSSI，如跳变过大则视为异常过滤掉；
- *  - No coverage detection：如果有效样本数少于 3，则认为覆盖不足，不发送请求。
+ * The WifiDataProcessor class is the Wi-Fi data gathering and processing class.
+ * 它负责启动 WiFi 扫描、构造指纹数据，并通知观察者，同时调用 RESTful 定位请求。
+ *
+ * @author ...
  */
 public class WifiDataProcessor implements Observable {
 
-    // 扫描间隔改为 30 秒，避免 WiFi Throttling（注意：开发者选项中最好禁用该功能）
-    private static final long SCAN_INTERVAL = 30000;
+    // 每次扫描的间隔（毫秒）
+    private static final long scanInterval = 5000;
     private final Context context;
     private final WifiManager wifiManager;
+    // 保存扫描到的 WiFi 数据
     private Wifi[] wifiData;
+    // 观察者列表
     private ArrayList<Observer> observers;
+    // 定时扫描对象
     private Timer scanWifiDataTimer;
-
-    // 用于简单的 RSSI 异常值检测：记录每个 AP 上一次的 RSSI
-    private final ArrayList<String> validMacs = new ArrayList<>();
-    private final ArrayList<Integer> lastRssiList = new ArrayList<>();
-    // 定义 RSSI 最大跳变阈值
-    private static final int RSSI_OUTLIER_THRESHOLD = 30;
 
     public WifiDataProcessor(Context context) {
         this.context = context;
@@ -55,123 +51,76 @@ public class WifiDataProcessor implements Observable {
         this.observers = new ArrayList<>();
 
         if (permissionsGranted) {
-            this.scanWifiDataTimer.schedule(new ScheduledWifiScan(), 0, SCAN_INTERVAL);
+            this.scanWifiDataTimer.schedule(new scheduledWifiScan(), 0, scanInterval);
         }
         checkWifiThrottling();
     }
 
+    /**
+     * 广播接收器：接收扫描完成后的广播
+     */
     BroadcastReceiver wifiScanReceiver = new BroadcastReceiver() {
         @Override
-        public void onReceive(Context ctx, Intent intent) {
-            if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        public void onReceive(Context context, Intent intent) {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 stopListening();
                 return;
             }
-            List<ScanResult> scanResults = wifiManager.getScanResults();
-            ctx.unregisterReceiver(this);
+            // 获取扫描结果
+            List<ScanResult> wifiScanList = wifiManager.getScanResults();
+            context.unregisterReceiver(this);
 
-            wifiData = new Wifi[scanResults.size()];
-            for (int i = 0; i < scanResults.size(); i++) {
-                ScanResult sr = scanResults.get(i);
-                Wifi w = new Wifi();
-                w.setBssidString(sr.BSSID);
-                w.setBssid(convertBssidToLong(sr.BSSID));
-                w.setLevel(sr.level);
-                w.setSsid(sr.SSID);
-                w.setFrequency(sr.frequency);
-                wifiData[i] = w;
+            wifiData = new Wifi[wifiScanList.size()];
+            for (int i = 0; i < wifiScanList.size(); i++) {
+                wifiData[i] = new Wifi();
+                String wifiMacAddress = wifiScanList.get(i).BSSID;
+                long intMacAddress = convertBssidToLong(wifiMacAddress);
+                wifiData[i].setBssid(intMacAddress);
+                wifiData[i].setLevel(wifiScanList.get(i).level);
+                wifiData[i].setSsid(wifiScanList.get(i).SSID);
+                wifiData[i].setFrequency(wifiScanList.get(i).frequency);
             }
 
-            // 构造指纹 JSON
-            JSONObject fingerprint = buildFingerprintJSON(wifiData);
-            if (fingerprint == null) {
-                Log.e("WifiDataProcessor", "No valid WiFi data to send. Coverage insufficient.");
-                Toast.makeText(context, "无足够WiFi覆盖，请确认至少检测到3个有效AP", Toast.LENGTH_SHORT).show();
-                return;
+            // 构造指纹 JSON 对象
+            JSONObject fingerprint = new JSONObject();
+            JSONArray wifiArray = new JSONArray();
+            try {
+                for (int i = 0; i < wifiData.length; i++) {
+                    // 过滤掉信号太弱的 WiFi（例如 -85 dBm 以下），可根据需要调整
+                    if (wifiData[i].getLevel() < -85) continue;
+                    wifiArray.put(wifiData[i].toJSONObject());
+                }
+                fingerprint.put("wifiFingerprint", wifiArray);
+                fingerprint.put("timestamp", System.currentTimeMillis());
+            } catch (JSONException e) {
+                e.printStackTrace();
             }
 
-            Log.d("WifiDataProcessor", "Fingerprint JSON: " + fingerprint.toString());
-
-            // 调用 WiFiPositioning（发送 REST 请求）
-            WiFiPositioning positioning = new WiFiPositioning(context);
-            positioning.request(fingerprint, new WiFiPositioning.VolleyCallback() {
+            // 调用 RESTful 定位请求
+            WiFiPositioning wifiPositioning = new WiFiPositioning(context);
+            wifiPositioning.request(fingerprint, new WiFiPositioning.VolleyCallback() {
                 @Override
                 public void onSuccess(com.google.android.gms.maps.model.LatLng location, int floor) {
-                    Toast.makeText(context, "定位成功: (" + location.latitude + ", " + location.longitude + "), floor=" + floor, Toast.LENGTH_LONG).show();
+                    // 显示定位结果（例如使用 Toast）
+                    Toast.makeText(context, "定位结果：(" + location.latitude + ", " + location.longitude + "), 楼层: " + floor, Toast.LENGTH_LONG).show();
                 }
-
                 @Override
                 public void onError(String message) {
                     Toast.makeText(context, "定位错误: " + message, Toast.LENGTH_LONG).show();
                 }
             });
 
+            // 通知观察者更新数据
             notifyObservers(0);
         }
     };
 
     /**
-     * 构造 fingerprint JSON。
-     * 格式：{
-     *   "radio": "wifi",
-     *   "samples": [ { "mac": "xx:xx:xx:xx:xx:xx", "rssi": -60 }, ... ],
-     *   "timestamp": 1234567890
-     * }
-     * 如果有效样本数少于 3，则返回 null（No coverage detection）。
+     * 将 MAC 地址从字符串转换为 long 类型
      */
-    private JSONObject buildFingerprintJSON(Wifi[] wifiArray) {
-        if (wifiArray == null || wifiArray.length == 0) return null;
-
-        JSONArray samplesArr = new JSONArray();
-        // 初始化 outlier 检测数据
-        // 对于每个 AP，检查与上次记录的 RSSI 是否跳变过大（简单实现：若第一次出现，则记录，否则比较差值）
-        for (Wifi w : wifiArray) {
-            if (w.getLevel() < -85) continue; // 忽略弱信号
-            if (w.getBssidString() == null || w.getBssidString().isEmpty()) continue;
-
-            // Outlier detection
-            int currentRssi = w.getLevel();
-            int index = validMacs.indexOf(w.getBssidString());
-            if (index != -1) {
-                int lastRssi = lastRssiList.get(index);
-                if (Math.abs(currentRssi - lastRssi) > RSSI_OUTLIER_THRESHOLD) {
-                    Log.w("WifiDataProcessor", "Outlier detected for " + w.getBssidString() + ": last=" + lastRssi + ", current=" + currentRssi);
-                    continue; // 过滤掉跳变过大的数据
-                } else {
-                    // 更新记录
-                    lastRssiList.set(index, currentRssi);
-                }
-            } else {
-                validMacs.add(w.getBssidString());
-                lastRssiList.add(currentRssi);
-            }
-
-            try {
-                samplesArr.put(w.toJSONObject());
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
-        }
-        // 如果有效样本数少于 3，则认为没有足够覆盖
-        if (samplesArr.length() < 3) return null;
-
-        JSONObject fingerprint = new JSONObject();
-        try {
-            fingerprint.put("radio", "wifi");
-            fingerprint.put("samples", samplesArr);
-            fingerprint.put("timestamp", System.currentTimeMillis());
-        } catch (JSONException e) {
-            e.printStackTrace();
-            return null;
-        }
-        return fingerprint;
-    }
-
     private long convertBssidToLong(String wifiMacAddress) {
         long intMacAddress = 0;
         int colonCount = 5;
-        if (wifiMacAddress == null) return 0;
-        if (wifiMacAddress.length() != 17) return 0;
         for (int j = 0; j < 17; j++) {
             char macByte = wifiMacAddress.charAt(j);
             if (macByte != ':') {
@@ -187,18 +136,23 @@ public class WifiDataProcessor implements Observable {
         return intMacAddress;
     }
 
+    /**
+     * 检查是否已授予所有必需的权限
+     */
     private boolean checkWifiPermissions() {
-        int wifiAccessPermission = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_WIFI_STATE);
-        int wifiChangePermission = ActivityCompat.checkSelfPermission(context, Manifest.permission.CHANGE_WIFI_STATE);
-        int coarseLocationPermission = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION);
-        int fineLocationPermission = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION);
-
+        int wifiAccessPermission = ActivityCompat.checkSelfPermission(this.context, Manifest.permission.ACCESS_WIFI_STATE);
+        int wifiChangePermission = ActivityCompat.checkSelfPermission(this.context, Manifest.permission.CHANGE_WIFI_STATE);
+        int coarseLocationPermission = ActivityCompat.checkSelfPermission(this.context, Manifest.permission.ACCESS_COARSE_LOCATION);
+        int fineLocationPermission = ActivityCompat.checkSelfPermission(this.context, Manifest.permission.ACCESS_FINE_LOCATION);
         return wifiAccessPermission == PackageManager.PERMISSION_GRANTED &&
                 wifiChangePermission == PackageManager.PERMISSION_GRANTED &&
                 coarseLocationPermission == PackageManager.PERMISSION_GRANTED &&
                 fineLocationPermission == PackageManager.PERMISSION_GRANTED;
     }
 
+    /**
+     * 发起一次 WiFi 扫描
+     */
     private void startWifiScan() {
         if (checkWifiPermissions()) {
             context.registerReceiver(wifiScanReceiver, new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION));
@@ -206,27 +160,36 @@ public class WifiDataProcessor implements Observable {
         }
     }
 
+    /**
+     * 开始周期性扫描 WiFi 数据
+     */
     public void startListening() {
         this.scanWifiDataTimer = new Timer();
-        this.scanWifiDataTimer.scheduleAtFixedRate(new ScheduledWifiScan(), 0, SCAN_INTERVAL);
+        this.scanWifiDataTimer.scheduleAtFixedRate(new scheduledWifiScan(), 0, scanInterval);
     }
 
+    /**
+     * 停止扫描
+     */
     public void stopListening() {
         try {
             context.unregisterReceiver(wifiScanReceiver);
         } catch (IllegalArgumentException e) {
-            // already unregistered
+            // 已经注销
         }
         this.scanWifiDataTimer.cancel();
     }
 
-    public void checkWifiThrottling() {
-        if (checkWifiPermissions()) {
+    /**
+     * 检查并提示用户禁用 WiFi 扫描节流
+     */
+    public void checkWifiThrottling(){
+        if(checkWifiPermissions()) {
             try {
-                if (android.provider.Settings.Global.getInt(context.getContentResolver(), "wifi_scan_throttle_enabled") == 1) {
-                    Toast.makeText(context, "请在开发者选项中禁用 Wi-Fi 扫描节流", Toast.LENGTH_SHORT).show();
+                if(Settings.Global.getInt(context.getContentResolver(), "wifi_scan_throttle_enabled") == 1) {
+                    Toast.makeText(context, "Disable Wi-Fi Throttling", Toast.LENGTH_SHORT).show();
                 }
-            } catch (android.provider.Settings.SettingNotFoundException e) {
+            } catch (Settings.SettingNotFoundException e) {
                 e.printStackTrace();
             }
         }
@@ -239,34 +202,38 @@ public class WifiDataProcessor implements Observable {
 
     @Override
     public void notifyObservers(int idx) {
-        for (Observer ob : observers) {
-            ob.update(wifiData);
+        for(Observer o : observers) {
+            o.update(wifiData);
         }
     }
 
-    private class ScheduledWifiScan extends TimerTask {
+    /**
+     * 定时任务，每 scanInterval 毫秒发起一次 WiFi 扫描
+     */
+    private class scheduledWifiScan extends TimerTask {
         @Override
         public void run() {
             startWifiScan();
         }
     }
 
-    public Wifi getCurrentWifiData() {
+    /**
+     * 获取当前已连接的 WiFi 信息
+     */
+    public Wifi getCurrentWifiData(){
         ConnectivityManager connectivityManager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         NetworkInfo networkInfo = connectivityManager.getNetworkInfo(ConnectivityManager.TYPE_WIFI);
-
         Wifi currentWifi = new Wifi();
-        if (networkInfo.isConnected()) {
+        if(networkInfo.isConnected()) {
             currentWifi.setSsid(wifiManager.getConnectionInfo().getSSID());
-            String macStr = wifiManager.getConnectionInfo().getBSSID();
-            long intMac = convertBssidToLong(macStr);
-            currentWifi.setBssid(intMac);
-            currentWifi.setBssidString(macStr);
+            String wifiMacAddress = wifiManager.getConnectionInfo().getBSSID();
+            long intMacAddress = convertBssidToLong(wifiMacAddress);
+            currentWifi.setBssid(intMacAddress);
             currentWifi.setFrequency(wifiManager.getConnectionInfo().getFrequency());
-        } else {
+        }
+        else{
             currentWifi.setSsid("Not connected");
             currentWifi.setBssid(0);
-            currentWifi.setBssidString("");
             currentWifi.setFrequency(0);
         }
         return currentWifi;

@@ -1,47 +1,66 @@
 package com.openpositioning.PositionMe.sensors;
 
+import com.openpositioning.PositionMe.presentation.fragment.MeasurementsFragment;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * The Wifi object holds WiFi parameters.
- * 为了兼容旧代码保留 long 型 bssid，同时新增 String 型 bssidString 用于发送给服务器。
- * 服务器要求发送 JSON 格式为：{ "mac": "xx:xx:xx:xx:xx:xx", "rssi": -60 }
+ * The Wifi object holds the Wifi parameters listed below.
+ *
+ * It contains the ssid (the identifier of the wifi), bssid (the mac address of the wifi), level
+ * (the strength of the wifi in dB) and frequency (the frequency of the wifi network (2.4GHz or
+ * 5GHz). For most objects only the bssid and the level are set.
+ *
+ * @author Virginia Cangelosi
+ * @author Mate Stodulka
  */
 public class Wifi {
     private String ssid;
-    private long bssid;          // 旧代码兼容
-    private String bssidString;  // 用于 REST 请求，保留原始 MAC 地址
-    private int level;           // RSSI
-    private long frequency;      // WiFi 频率
+    private long bssid;
+    private int level;
+    private long frequency;
 
+    /**
+     * Empty public default constructor of the Wifi object.
+     */
     public Wifi(){}
 
+    /**
+     * Getters for each property
+     */
     public String getSsid() { return ssid; }
     public long getBssid() { return bssid; }
-    public String getBssidString() { return bssidString; }
     public int getLevel() { return level; }
     public long getFrequency() { return frequency; }
 
+    /**
+     * Setters for each property
+     */
     public void setSsid(String ssid) { this.ssid = ssid; }
     public void setBssid(long bssid) { this.bssid = bssid; }
-    public void setBssidString(String bssidString) { this.bssidString = bssidString; }
     public void setLevel(int level) { this.level = level; }
     public void setFrequency(long frequency) { this.frequency = frequency; }
 
+    /**
+     * Generates a string containing mac address and rssi of Wifi.
+     *
+     * Concatenates mac address and rssi to display in the
+     * {@link MeasurementsFragment} fragment
+     */
     @Override
     public String toString() {
-        return "Wifi{bssid(long)=" + bssid + ", level=" + level + "}";
+        return  "bssid: " + bssid +", level: " + level;
     }
 
     /**
-     * 将 Wifi 对象转换为 JSONObject，用于发送给 openpositioning 服务器。
-     * 仅包含 "mac" 和 "rssi" 字段（符合常见接口要求）。
+     * 新增方法：将 Wifi 对象转换为 JSONObject，用于生成指纹数据
      */
     public JSONObject toJSONObject() throws JSONException {
         JSONObject obj = new JSONObject();
-        obj.put("mac", bssidString != null ? bssidString : "");
-        obj.put("rssi", level);
+        obj.put("bssid", bssid);
+        obj.put("level", level);
+        obj.put("ssid", ssid);
+        obj.put("frequency", frequency);
         return obj;
     }
 }
