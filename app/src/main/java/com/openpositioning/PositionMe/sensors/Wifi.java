@@ -1,6 +1,5 @@
 package com.openpositioning.PositionMe.sensors;
 
-import com.openpositioning.PositionMe.presentation.fragment.MeasurementsFragment;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -11,14 +10,17 @@ import org.json.JSONObject;
  * (the strength of the wifi in dB) and frequency (the frequency of the wifi network (2.4GHz or
  * 5GHz). For most objects only the bssid and the level are set.
  *
- * @author Virginia Cangelosi
- * @author Mate Stodulka
+ * 增加了异常值标记，用于异常值检测
+ *
+ * @author Virginia
+ * @author Mate
  */
 public class Wifi {
     private String ssid;
     private long bssid;
     private int level;
     private long frequency;
+    private boolean isOutlier; // 新增：是否为异常值
 
     /**
      * Empty public default constructor of the Wifi object.
@@ -32,6 +34,7 @@ public class Wifi {
     public long getBssid() { return bssid; }
     public int getLevel() { return level; }
     public long getFrequency() { return frequency; }
+    public boolean isOutlier() { return isOutlier; }
 
     /**
      * Setters for each property
@@ -40,27 +43,16 @@ public class Wifi {
     public void setBssid(long bssid) { this.bssid = bssid; }
     public void setLevel(int level) { this.level = level; }
     public void setFrequency(long frequency) { this.frequency = frequency; }
+    public void setOutlier(boolean isOutlier) { this.isOutlier = isOutlier; }
 
     /**
      * Generates a string containing mac address and rssi of Wifi.
      *
-     * Concatenates mac address and rssi to display in the
-     * {@link MeasurementsFragment} fragment
+     * If the signal is marked as an outlier, it appends a notice.
      */
     @Override
     public String toString() {
-        return  "bssid: " + bssid +", level: " + level;
-    }
-
-    /**
-     * 新增方法：将 Wifi 对象转换为 JSONObject，用于生成指纹数据
-     */
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject obj = new JSONObject();
-        obj.put("bssid", bssid);
-        obj.put("level", level);
-        obj.put("ssid", ssid);
-        obj.put("frequency", frequency);
-        return obj;
+        String outlierStr = isOutlier ? " [Outlier]" : "";
+        return  "bssid: " + bssid + ", level: " + level + outlierStr;
     }
 }

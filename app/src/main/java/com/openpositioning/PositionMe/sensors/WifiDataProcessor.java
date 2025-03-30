@@ -11,11 +11,11 @@ import android.net.NetworkInfo;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
 import android.provider.Settings;
+import android.util.Log;
 import android.widget.Toast;
 
 import androidx.core.app.ActivityCompat;
 
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -27,6 +27,8 @@ import java.util.TimerTask;
 /**
  * The WifiDataProcessor class is the Wi-Fi data gathering and processing class.
  * 它负责启动 WiFi 扫描、构造指纹数据，并通知观察者，同时调用 RESTful 定位请求。
+ *
+ * 新增了异常值检测功能，并在扫描结果为空时（无覆盖）进行通知。
  *
  * @author ...
  */
@@ -43,6 +45,9 @@ public class WifiDataProcessor implements Observable {
     // 定时扫描对象
     private Timer scanWifiDataTimer;
 
+    /**
+     * Public default constructor of the WifiDataProcessor class.
+     */
     public WifiDataProcessor(Context context) {
         this.context = context;
         boolean permissionsGranted = checkWifiPermissions();
@@ -51,7 +56,7 @@ public class WifiDataProcessor implements Observable {
         this.observers = new ArrayList<>();
 
         if (permissionsGranted) {
-            this.scanWifiDataTimer.schedule(new scheduledWifiScan(), 0, scanInterval);
+            this.scanWifiDataTimer.schedule(new ScheduledWifiScan(), 0, scanInterval);
         }
         checkWifiThrottling();
     }
@@ -66,52 +71,34 @@ public class WifiDataProcessor implements Observable {
                 stopListening();
                 return;
             }
-            // 获取扫描结果
-            List<ScanResult> wifiScanList = wifiManager.getScanResults();
-            context.unregisterReceiver(this);
 
-            wifiData = new Wifi[wifiScanList.size()];
-            for (int i = 0; i < wifiScanList.size(); i++) {
-                wifiData[i] = new Wifi();
-                String wifiMacAddress = wifiScanList.get(i).BSSID;
-                long intMacAddress = convertBssidToLong(wifiMacAddress);
-                wifiData[i].setBssid(intMacAddress);
-                wifiData[i].setLevel(wifiScanList.get(i).level);
-                wifiData[i].setSsid(wifiScanList.get(i).SSID);
-                wifiData[i].setFrequency(wifiScanList.get(i).frequency);
+            if (WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(intent.getAction())) {
+                List<ScanResult> wifiScanList = wifiManager.getScanResults();
+                if(wifiScanList == null || wifiScanList.isEmpty()){
+                    // 无扫描结果，提示无覆盖
+                    wifiData = new Wifi[0];
+                    notifyObservers(0);
+                    return;
+                }
+
+                wifiData = new Wifi[wifiScanList.size()];
+                for (int i = 0; i < wifiScanList.size(); i++) {
+                    wifiData[i] = new Wifi();
+                    String wifiMacAddress = wifiScanList.get(i).BSSID;
+                    long intMacAddress = convertBssidToLong(wifiMacAddress);
+                    wifiData[i].setBssid(intMacAddress);
+                    wifiData[i].setLevel(wifiScanList.get(i).level);
+                }
+
+                // 异常值检测：过滤出信号异常的条目并标记
+                wifiData = filterOutliers(wifiData);
+
+                // Notify observers of change in wifiData variable
+                notifyObservers(0);
+
+                // Unregister receiver after handling scan result
+                stopListening();
             }
-
-            // 构造指纹 JSON 对象
-            JSONObject fingerprint = new JSONObject();
-            JSONArray wifiArray = new JSONArray();
-            try {
-                for (int i = 0; i < wifiData.length; i++) {
-                    // 过滤掉信号太弱的 WiFi（例如 -85 dBm 以下），可根据需要调整
-                    if (wifiData[i].getLevel() < -85) continue;
-                    wifiArray.put(wifiData[i].toJSONObject());
-                }
-                fingerprint.put("wifiFingerprint", wifiArray);
-                fingerprint.put("timestamp", System.currentTimeMillis());
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
-
-            // 调用 RESTful 定位请求
-            WiFiPositioning wifiPositioning = new WiFiPositioning(context);
-            wifiPositioning.request(fingerprint, new WiFiPositioning.VolleyCallback() {
-                @Override
-                public void onSuccess(com.google.android.gms.maps.model.LatLng location, int floor) {
-                    // 显示定位结果（例如使用 Toast）
-                    Toast.makeText(context, "定位结果：(" + location.latitude + ", " + location.longitude + "), 楼层: " + floor, Toast.LENGTH_LONG).show();
-                }
-                @Override
-                public void onError(String message) {
-                    Toast.makeText(context, "定位错误: " + message, Toast.LENGTH_LONG).show();
-                }
-            });
-
-            // 通知观察者更新数据
-            notifyObservers(0);
         }
     };
 
@@ -165,7 +152,7 @@ public class WifiDataProcessor implements Observable {
      */
     public void startListening() {
         this.scanWifiDataTimer = new Timer();
-        this.scanWifiDataTimer.scheduleAtFixedRate(new scheduledWifiScan(), 0, scanInterval);
+        this.scanWifiDataTimer.scheduleAtFixedRate(new ScheduledWifiScan(), 0, scanInterval);
     }
 
     /**
@@ -210,11 +197,39 @@ public class WifiDataProcessor implements Observable {
     /**
      * 定时任务，每 scanInterval 毫秒发起一次 WiFi 扫描
      */
-    private class scheduledWifiScan extends TimerTask {
+    private class ScheduledWifiScan extends TimerTask {
         @Override
         public void run() {
             startWifiScan();
         }
+    }
+
+    /**
+     * 异常值检测方法：
+     * 计算所有 WiFi 信号的均值和标准差，将偏离均值超过 2 倍标准差的信号标记为异常值。
+     */
+    private Wifi[] filterOutliers(Wifi[] data) {
+        if(data == null || data.length == 0) return data;
+        double sum = 0;
+        for(Wifi wifi : data) {
+            sum += wifi.getLevel();
+        }
+        double mean = sum / data.length;
+        double variance = 0;
+        for(Wifi wifi : data) {
+            variance += Math.pow(wifi.getLevel() - mean, 2);
+        }
+        double stddev = Math.sqrt(variance / data.length);
+        double threshold = 2 * stddev;
+
+        for(Wifi wifi : data) {
+            if(Math.abs(wifi.getLevel() - mean) > threshold) {
+                wifi.setOutlier(true);
+            } else {
+                wifi.setOutlier(false);
+            }
+        }
+        return data;
     }
 
     /**
