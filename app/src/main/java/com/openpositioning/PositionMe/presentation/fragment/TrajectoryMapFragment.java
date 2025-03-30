@@ -10,6 +10,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.Spinner;
+
 import com.google.android.material.switchmaterial.SwitchMaterial;
 
 import androidx.annotation.NonNull;
@@ -28,7 +29,6 @@ import com.google.android.gms.maps.model.*;
 
 import java.util.ArrayList;
 import java.util.List;
-
 
 /**
  * A fragment responsible for displaying a trajectory map using Google Maps.
@@ -50,7 +50,6 @@ import java.util.List;
  *
  * @author Mate Stodulka
  */
-
 public class TrajectoryMapFragment extends Fragment {
 
     private GoogleMap gMap; // Google Maps instance
@@ -70,7 +69,6 @@ public class TrajectoryMapFragment extends Fragment {
     private IndoorMapManager indoorMapManager; // Manages indoor mapping
     private SensorFusion sensorFusion;
 
-
     // UI
     private Spinner switchMapSpinner;
 
@@ -85,7 +83,6 @@ public class TrajectoryMapFragment extends Fragment {
     private Polyline pfPolyline;
     private LatLng lastEKFLocation = null;
     private LatLng lastPFLocation = null;
-
 
     public TrajectoryMapFragment() {
         // Required empty public constructor
@@ -138,8 +135,6 @@ public class TrajectoryMapFragment extends Fragment {
                     drawBuildingPolygon();
 
                     Log.d("TrajectoryMapFragment", "onMapReady: Map is ready!");
-
-
                 }
             });
         }
@@ -173,15 +168,10 @@ public class TrajectoryMapFragment extends Fragment {
 
         // Floor up/down logic
         autoFloorSwitch.setOnCheckedChangeListener((compoundButton, isChecked) -> {
-
-            //TODO - fix the sensor fusion method to get the elevation (cannot get it from the current method)
-//            float elevationVal = sensorFusion.getElevation();
-//            indoorMapManager.setCurrentFloor((int)(elevationVal/indoorMapManager.getFloorHeight())
-//                    ,true);
+            //TODO - fix the sensor fusion method to get the elevation
         });
 
         floorUpButton.setOnClickListener(v -> {
-            // If user manually changes floor, turn off auto floor
             autoFloorSwitch.setChecked(false);
             if (indoorMapManager != null) {
                 indoorMapManager.increaseFloor();
@@ -198,15 +188,10 @@ public class TrajectoryMapFragment extends Fragment {
 
     /**
      * Initialize the map settings with the provided GoogleMap instance.
-     * <p>
-     *     The method sets basic map settings, initializes the indoor map manager,
-     *     and creates an empty polyline for user movement tracking.
-     *     The method also initializes the GNSS polyline for tracking GNSS path.
-     *     The method sets the map type to Hybrid and initializes the map with these settings.
+     * 设置地图相关参数，并为所有轨迹线设置较高的 zIndex 确保它们显示在上层。
      *
-     * @param map
+     * @param map GoogleMap 实例
      */
-
     private void initMapSettings(GoogleMap map) {
         map.getUiSettings().setCompassEnabled(true);
         map.getUiSettings().setTiltGesturesEnabled(true);
@@ -216,35 +201,35 @@ public class TrajectoryMapFragment extends Fragment {
 
         indoorMapManager = new IndoorMapManager(map);
 
+        // 设置较高的 zIndex（例如10）使轨迹绘制在上层
         polyline = map.addPolyline(new PolylineOptions()
-                .color(Color.RED).width(5f).add());
+                .color(Color.RED)
+                .width(5f)
+                .zIndex(10)
+                .add());
 
         gnssPolyline = map.addPolyline(new PolylineOptions()
-                .color(Color.BLUE).width(5f).add());
+                .color(Color.BLUE)
+                .width(5f)
+                .zIndex(10)
+                .add());
 
-        // 添加 EKF / PF 轨迹线
+        // 添加 EKF / PF 轨迹线，设置较高的 zIndex
         ekfPolyline = map.addPolyline(new PolylineOptions()
-                .color(Color.GREEN).width(5f).add());
+                .color(Color.GREEN)
+                .width(5f)
+                .zIndex(10)
+                .add());
 
         pfPolyline = map.addPolyline(new PolylineOptions()
-                .color(Color.MAGENTA).width(5f).add());
+                .color(Color.MAGENTA)
+                .width(5f)
+                .zIndex(10)
+                .add());
     }
-
 
     /**
      * Initialize the map type spinner with the available map types.
-     * <p>
-     *     The spinner allows the user to switch between different map types
-     *     (e.g. Hybrid, Normal, Satellite) to customize their map view.
-     *     The spinner is populated with the available map types and listens
-     *     for user selection to update the map accordingly.
-     *     The map type is updated directly on the GoogleMap instance.
-     *     <p>
-     *         Note: The spinner is initialized with the default map type (Hybrid).
-     *         The map type is updated on user selection.
-     *     </p>
-     * </p>
-     *     @see com.google.android.gms.maps.GoogleMap The GoogleMap instance to update map type.
      */
     private void initMapTypeSpinner() {
         if (switchMapSpinner == null) return;
@@ -287,17 +272,13 @@ public class TrajectoryMapFragment extends Fragment {
      * and append to polyline if the user actually moved.
      *
      * @param newLocation The new location to plot.
-     * @param orientation The user’s heading (e.g. from sensor fusion).
+     * @param orientation The user’s heading.
      */
     public void updateUserLocation(@NonNull LatLng newLocation, float orientation) {
-
         if (gMap == null) return;
-
-        // Keep track of current location
         LatLng oldLocation = this.currentLocation;
         this.currentLocation = newLocation;
 
-        // If no marker, create it
         if (orientationMarker == null) {
             orientationMarker = gMap.addMarker(new MarkerOptions()
                     .position(newLocation)
@@ -309,61 +290,49 @@ public class TrajectoryMapFragment extends Fragment {
             );
             gMap.moveCamera(CameraUpdateFactory.newLatLngZoom(newLocation, 19f));
         } else {
-            // Update marker position + orientation
             orientationMarker.setPosition(newLocation);
             orientationMarker.setRotation(orientation);
-            // Move camera a bit
             gMap.moveCamera(CameraUpdateFactory.newLatLng(newLocation));
         }
 
-        // Extend polyline if movement occurred
         if (oldLocation != null && !oldLocation.equals(newLocation) && polyline != null) {
             List<LatLng> points = new ArrayList<>(polyline.getPoints());
             points.add(newLocation);
             polyline.setPoints(points);
         }
 
-        // Update indoor map overlay
         if (indoorMapManager != null) {
             indoorMapManager.setCurrentLocation(newLocation);
             setFloorControlsVisibility(indoorMapManager.getIsIndoorMapSet() ? View.VISIBLE : View.GONE);
         }
     }
+
     public void updateUserLocationSafe(@NonNull LatLng newLocation, float orientation) {
         if (gMap == null || newLocation == null) return;
         if (Double.isNaN(newLocation.latitude) || Double.isNaN(newLocation.longitude) || Float.isNaN(orientation)) {
-            Log.w("TrajectoryMap", "⚠️ Skip location update due to NaN values: "
-                    + newLocation + ", orientation=" + orientation);
+            Log.w("TrajectoryMap", "Skip location update due to NaN values: " + newLocation + ", orientation=" + orientation);
             return;
         }
         updateUserLocation(newLocation, orientation);
     }
 
-
     /**
      * Set the initial camera position for the map.
-     * <p>
-     *     The method sets the initial camera position for the map when it is first loaded.
-     *     If the map is already ready, the camera is moved immediately.
-     *     If the map is not ready, the camera position is stored until the map is ready.
-     *     The method also tracks if there is a pending camera move.
-     * </p>
-     * @param startLocation The initial camera position to set.
+     *
+     * @param startLocation The initial camera position.
      */
     public void setInitialCameraPosition(@NonNull LatLng startLocation) {
-        // If the map is already ready, move camera immediately
         if (gMap != null) {
             gMap.moveCamera(CameraUpdateFactory.newLatLngZoom(startLocation, 19f));
         } else {
-            // Otherwise, store it until onMapReady
             pendingCameraPosition = startLocation;
             hasPendingCameraMove = true;
         }
     }
 
-
     /**
-     * Get the current user location on the map.
+     * Get the current user location.
+     *
      * @return The current user location as a LatLng object.
      */
     public LatLng getCurrentLocation() {
@@ -371,25 +340,22 @@ public class TrajectoryMapFragment extends Fragment {
     }
 
     /**
-     * Called when we want to set or update the GNSS marker position
+     * Update or add the GNSS marker.
+     *
+     * @param gnssLocation The new GNSS location.
      */
     public void updateGNSS(@NonNull LatLng gnssLocation) {
         if (gMap == null) return;
         if (!isGnssOn) return;
 
         if (gnssMarker == null) {
-            // Create the GNSS marker for the first time
             gnssMarker = gMap.addMarker(new MarkerOptions()
                     .position(gnssLocation)
                     .title("GNSS Position")
-                    .icon(BitmapDescriptorFactory
-                            .defaultMarker(BitmapDescriptorFactory.HUE_AZURE)));
+                    .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)));
             lastGnssLocation = gnssLocation;
         } else {
-            // Move existing GNSS marker
             gnssMarker.setPosition(gnssLocation);
-
-            // Add a segment to the blue GNSS line, if this is a new location
             if (lastGnssLocation != null && !lastGnssLocation.equals(gnssLocation)) {
                 List<LatLng> gnssPoints = new ArrayList<>(gnssPolyline.getPoints());
                 gnssPoints.add(gnssLocation);
@@ -399,9 +365,8 @@ public class TrajectoryMapFragment extends Fragment {
         }
     }
 
-
     /**
-     * Remove GNSS marker if user toggles it off
+     * Remove the GNSS marker.
      */
     public void clearGNSS() {
         if (gnssMarker != null) {
@@ -411,7 +376,9 @@ public class TrajectoryMapFragment extends Fragment {
     }
 
     /**
-     * Whether user is currently showing GNSS or not
+     * Whether GNSS is enabled.
+     *
+     * @return true if enabled, false otherwise.
      */
     public boolean isGnssEnabled() {
         return isGnssOn;
@@ -423,6 +390,9 @@ public class TrajectoryMapFragment extends Fragment {
         autoFloorSwitch.setVisibility(visibility);
     }
 
+    /**
+     * 清除地图上的所有轨迹和标记，并重新创建空的轨迹线。
+     */
     public void clearMapAndReset() {
         if (polyline != null) {
             polyline.remove();
@@ -443,53 +413,32 @@ public class TrajectoryMapFragment extends Fragment {
         lastGnssLocation = null;
         currentLocation  = null;
 
-        // Re-create empty polylines with your chosen colors
         if (gMap != null) {
             polyline = gMap.addPolyline(new PolylineOptions()
                     .color(Color.RED)
                     .width(5f)
+                    .zIndex(10)
                     .add());
             gnssPolyline = gMap.addPolyline(new PolylineOptions()
                     .color(Color.BLUE)
                     .width(5f)
+                    .zIndex(10)
                     .add());
-        }
-        if (polyline != null) polyline.remove();
-        if (gnssPolyline != null) gnssPolyline.remove();
-        if (ekfPolyline != null) ekfPolyline.remove();
-        if (pfPolyline != null) pfPolyline.remove();
-        if (orientationMarker != null) orientationMarker.remove();
-        if (gnssMarker != null) gnssMarker.remove();
-
-        lastGnssLocation = null;
-        lastEKFLocation = null;
-        lastPFLocation = null;
-        currentLocation  = null;
-
-        if (gMap != null) {
-            polyline = gMap.addPolyline(new PolylineOptions().color(Color.RED).width(5f).add());
-            gnssPolyline = gMap.addPolyline(new PolylineOptions().color(Color.BLUE).width(5f).add());
-            ekfPolyline = gMap.addPolyline(new PolylineOptions().color(Color.GREEN).width(5f).add());
-            pfPolyline = gMap.addPolyline(new PolylineOptions().color(Color.MAGENTA).width(5f).add());
+            ekfPolyline = gMap.addPolyline(new PolylineOptions()
+                    .color(Color.GREEN)
+                    .width(5f)
+                    .zIndex(10)
+                    .add());
+            pfPolyline = gMap.addPolyline(new PolylineOptions()
+                    .color(Color.MAGENTA)
+                    .width(5f)
+                    .zIndex(10)
+                    .add());
         }
     }
 
     /**
-     * Draw the building polygon on the map
-     * <p>
-     *     The method draws a polygon representing the building on the map.
-     *     The polygon is drawn with specific vertices and colors to represent
-     *     different buildings or areas on the map.
-     *     The method removes the old polygon if it exists and adds the new polygon
-     *     to the map with the specified options.
-     *     The method logs the number of vertices in the polygon for debugging.
-     *     <p>
-     *
-     *    Note: The method uses hard-coded vertices for the building polygon.
-     *
-     *    </p>
-     *
-     *    See: {@link com.google.android.gms.maps.model.PolygonOptions} The options for the new polygon.
+     * Draw the building polygon on the map.
      */
     private void drawBuildingPolygon() {
         if (gMap == null) {
@@ -497,13 +446,12 @@ public class TrajectoryMapFragment extends Fragment {
             return;
         }
 
-        // nuclear building polygon vertices
+        // nucleus building polygon vertices
         LatLng nucleus1 = new LatLng(55.92279538827796, -3.174612147506538);
         LatLng nucleus2 = new LatLng(55.92278121423647, -3.174107900816096);
         LatLng nucleus3 = new LatLng(55.92288405733954, -3.173843694667146);
         LatLng nucleus4 = new LatLng(55.92331786793876, -3.173832892645086);
         LatLng nucleus5 = new LatLng(55.923337194112555, -3.1746284301397387);
-
 
         // nkml building polygon vertices
         LatLng nkml1 = new LatLng(55.9230343434213, -3.1751847990731954);
@@ -511,60 +459,53 @@ public class TrajectoryMapFragment extends Fragment {
         LatLng nkml4 = new LatLng(55.92280139974615, -3.175195527934348);
         LatLng nkml3 = new LatLng(55.922793885410734, -3.1747958788136867);
 
-        LatLng fjb1 = new LatLng(55.92269205199916, -3.1729563477188774);//left top
+        // fjb building polygon vertices
+        LatLng fjb1 = new LatLng(55.92269205199916, -3.1729563477188774);
         LatLng fjb2 = new LatLng(55.922822801570994, -3.172594249522305);
         LatLng fjb3 = new LatLng(55.92223512226413, -3.171921917547244);
         LatLng fjb4 = new LatLng(55.9221071265519, -3.1722813131202097);
 
+        // faraday building polygon vertices
         LatLng faraday1 = new LatLng(55.92242866264128, -3.1719553662011815);
         LatLng faraday2 = new LatLng(55.9224966752294, -3.1717846714743474);
         LatLng faraday3 = new LatLng(55.922271383074154, -3.1715191463437162);
         LatLng faraday4 = new LatLng(55.92220124468304, -3.171705013935158);
 
-
-
         PolygonOptions buildingPolygonOptions = new PolygonOptions()
                 .add(nucleus1, nucleus2, nucleus3, nucleus4, nucleus5)
-                .strokeColor(Color.RED)    // Red border
-                .strokeWidth(10f)           // Border width
-                //.fillColor(Color.argb(50, 255, 0, 0)) // Semi-transparent red fill
-                .zIndex(1);                // Set a higher zIndex to ensure it appears above other overlays
+                .strokeColor(Color.RED)
+                .strokeWidth(10f)
+                .zIndex(1);
 
-        // Options for the new polygon
         PolygonOptions buildingPolygonOptions2 = new PolygonOptions()
                 .add(nkml1, nkml2, nkml3, nkml4, nkml1)
-                .strokeColor(Color.BLUE)    // Blue border
-                .strokeWidth(10f)           // Border width
-               // .fillColor(Color.argb(50, 0, 0, 255)) // Semi-transparent blue fill
-                .zIndex(1);                // Set a higher zIndex to ensure it appears above other overlays
+                .strokeColor(Color.BLUE)
+                .strokeWidth(10f)
+                .zIndex(1);
 
         PolygonOptions buildingPolygonOptions3 = new PolygonOptions()
                 .add(fjb1, fjb2, fjb3, fjb4, fjb1)
-                .strokeColor(Color.GREEN)    // Green border
-                .strokeWidth(10f)           // Border width
-                //.fillColor(Color.argb(50, 0, 255, 0)) // Semi-transparent green fill
-                .zIndex(1);                // Set a higher zIndex to ensure it appears above other overlays
+                .strokeColor(Color.GREEN)
+                .strokeWidth(10f)
+                .zIndex(1);
 
         PolygonOptions buildingPolygonOptions4 = new PolygonOptions()
                 .add(faraday1, faraday2, faraday3, faraday4, faraday1)
-                .strokeColor(Color.YELLOW)    // Yellow border
-                .strokeWidth(10f)           // Border width
-                //.fillColor(Color.argb(50, 255, 255, 0)) // Semi-transparent yellow fill
-                .zIndex(1);                // Set a higher zIndex to ensure it appears above other overlays
+                .strokeColor(Color.YELLOW)
+                .strokeWidth(10f)
+                .zIndex(1);
 
-
-        // Remove the old polygon if it exists
         if (buildingPolygon != null) {
             buildingPolygon.remove();
         }
 
-        // Add the polygon to the map
         buildingPolygon = gMap.addPolygon(buildingPolygonOptions);
         gMap.addPolygon(buildingPolygonOptions2);
         gMap.addPolygon(buildingPolygonOptions3);
         gMap.addPolygon(buildingPolygonOptions4);
         Log.d("TrajectoryMapFragment", "Building polygon added, vertex count: " + buildingPolygon.getPoints().size());
     }
+
     public void updateEKF(@NonNull LatLng ekfLocation) {
         if (gMap == null || ekfLocation == null) return;
         if (lastEKFLocation == null || !lastEKFLocation.equals(ekfLocation)) {
@@ -584,8 +525,4 @@ public class TrajectoryMapFragment extends Fragment {
             lastPFLocation = pfLocation;
         }
     }
-
-
-
-
 }
